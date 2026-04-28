@@ -1,0 +1,58 @@
+# ─── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# ─── UV ───────────────────────────────────────────────────────────────────────
+# Uncomment if you want to ignore the lockfile (not recommended for apps)
+# uv.lock
+.venv/
+.python-version
+
+# ─── Distribution / Packaging ─────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+MANIFEST
+
+# ─── Flask ────────────────────────────────────────────────────────────────────
+instance/
+.webassets-cache
+
+# ─── Environment variables ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Tests & Coverage ─────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# ─── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── IDEs & Editors ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ─── AI Agents & LLM Tools ────────────────────────────────────────────────────
+.claude/
+.specify/
+.cline/
+.roo/
+.gemini/
+.cursor/
+.aider/
+
+# ─── Docker Volumes & Data ────────────────────────────────────────────────────
+docker/*/data/
+docker/*/certs/

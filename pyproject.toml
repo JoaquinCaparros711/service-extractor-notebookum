@@ -1,0 +1,21 @@
+[project]
+name = "service-extractor-notebookum"
+version = "0.1.0"
+description = "Extractor Microservice for NotebookUm"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "flask>=3.1",
+    "docling>=1.0",
+    "granian>=1.0",
+    "werkzeug>=3.0",
+    "python-dotenv>=1.0",
+]
+
+[dependency-groups]
+dev = [
+    "black>=24.0",
+    "flake8>=7.0",
+    "pytest>=8.0",
+    "pytest-flask>=1.3",
+]

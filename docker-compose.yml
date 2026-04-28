@@ -1,0 +1,32 @@
+services: 
+    extractor:
+        build:
+            context: .
+            dockerfile: Dockerfile
+        image: notebookum-extractor:latest
+        restart: unless-stopped
+        # LOAD BALANCER PATTERN
+        deploy:
+            replicas: 2
+        networks:
+            - notebookum-network
+        labels:
+            - "traefik.enable=true"
+            - "traefik.http.routers.extractor.rule=Host(`extractor.internal`)"
+            - "traefik.http.services.extractor.loadbalancer.server.port=5001"
+            # CIRCUIT BREAKER PATTERN: Open circuit if error rate > 50%
+            - "traefik.http.middlewares.cb-extractor.circuitbreaker.expression=NetworkErrorRatio() > 0.5"
+            # BULKHEAD PATTERN: Limit concurrent connections to 20
+            - "traefik.http.middlewares.bulkhead-extractor.inflightreq.amount=20"
+            - "traefik.http.routers.extractor.middlewares=cb-extractor,bulkhead-extractor"
+        volumes:
+            - ./app:/app/app:ro
+            - ./main.py:/app/main.py:ro
+        environment:
+            - FLASK_ENV=development
+            - PORT=5001
+            - MAX_UPLOAD_SIZE=26214400
+
+networks:
+    notebookum-network:
+        external: true
