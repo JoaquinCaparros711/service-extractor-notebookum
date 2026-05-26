@@ -43,6 +43,13 @@ Respuesta exitosa:
 
 Los errores de validación se devuelven como `application/problem+json`.
 
+Casos rechazados con HTTP 400:
+
+- El campo `file` no está presente.
+- El archivo no declara `content-type: application/pdf`.
+- El PDF supera el límite configurado de 25MB.
+- El archivo declara ser PDF pero el contenido está corrupto o no tiene firma PDF válida.
+
 ## Ejecución con Docker
 ```bash
 docker-compose up -d --build

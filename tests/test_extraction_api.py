@@ -1,6 +1,17 @@
 import io
 
 
+def assert_problem_details(response, expected_detail):
+    assert response.status_code == 400
+    assert response.content_type == "application/problem+json"
+    data = response.get_json()
+    assert data["type"] == "about:blank"
+    assert data["title"] == "Bad Request"
+    assert data["status"] == 400
+    assert expected_detail in data["detail"].lower()
+    assert data["instance"] == "/internal/v1/extractions"
+
+
 def make_pdf_bytes(text="NotebookUm extractor listo"):
     escaped = text.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
     return (
@@ -21,7 +32,7 @@ def test_extract_valid_pdf_returns_text_metadata_and_correlation_id(client):
         "/internal/v1/extractions",
         data={
             "document_id": "doc-123",
-            "file": (io.BytesIO(make_pdf_bytes()), "sample.pdf"),
+            "file": (io.BytesIO(make_pdf_bytes()), "sample.pdf", "application/pdf"),
         },
         headers={"X-Correlation-ID": "corr-123"},
         content_type="multipart/form-data",
@@ -41,7 +52,13 @@ def test_extract_valid_pdf_returns_text_metadata_and_correlation_id(client):
 def test_extract_valid_pdf_generates_ids_when_missing(client):
     response = client.post(
         "/internal/v1/extractions",
-        data={"file": (io.BytesIO(make_pdf_bytes("texto")), "sample.pdf")},
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("texto")),
+                "sample.pdf",
+                "application/pdf",
+            )
+        },
         content_type="multipart/form-data",
     )
 
@@ -55,12 +72,36 @@ def test_extract_valid_pdf_generates_ids_when_missing(client):
 def test_extract_rejects_non_pdf_with_problem_details(client):
     response = client.post(
         "/internal/v1/extractions",
-        data={"file": (io.BytesIO(b"hola"), "sample.txt")},
+        data={"file": (io.BytesIO(b"hola"), "sample.txt", "text/plain")},
         content_type="multipart/form-data",
     )
 
-    assert response.status_code == 400
-    assert response.content_type == "application/problem+json"
-    data = response.get_json()
-    assert data["status"] == 400
-    assert "pdf" in data["detail"].lower()
+    assert_problem_details(response, "pdf")
+
+
+def test_extract_rejects_file_over_max_upload_size_with_problem_details(app, client):
+    app.config["MAX_UPLOAD_SIZE"] = 8
+
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("archivo demasiado grande")),
+                "large.pdf",
+                "application/pdf",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert_problem_details(response, "25mb")
+
+
+def test_extract_rejects_corrupted_pdf_with_problem_details(client):
+    response = client.post(
+        "/internal/v1/extractions",
+        data={"file": (io.BytesIO(b"not-a-real-pdf"), "broken.pdf", "application/pdf")},
+        content_type="multipart/form-data",
+    )
+
+    assert_problem_details(response, "invalid pdf")
