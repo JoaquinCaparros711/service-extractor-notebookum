@@ -28,6 +28,7 @@ Respuesta exitosa:
   "document_id": "doc-123",
   "correlation_id": "corr-123",
   "status": "accepted",
+  "bulkhead": "light",
   "created_at": "2026-05-26T12:00:00+00:00",
   "updated_at": "2026-05-26T12:00:00+00:00"
 }
@@ -52,6 +53,7 @@ Devuelve el resultado cuando el trabajo está `completed`. Si todavía está pen
     "filename": "documento.pdf",
     "content_type": "application/pdf",
     "size_bytes": 12345,
+    "bulkhead": "light",
     "extraction_strategy": "docling"
   },
   "metrics": {
@@ -69,6 +71,25 @@ Casos rechazados con HTTP 400:
 - El archivo no declara `content-type: application/pdf`.
 - El PDF supera el límite configurado de 25MB.
 - El archivo declara ser PDF pero el contenido está corrupto o no tiene firma PDF válida.
+
+## Bulkhead
+
+El servicio separa trabajos de extracción en dos particiones:
+
+- `light`: PDFs menores al umbral `HEAVY_PDF_THRESHOLD_BYTES`.
+- `heavy`: PDFs mayores o iguales al umbral `HEAVY_PDF_THRESHOLD_BYTES`.
+
+Cada partición tiene workers y capacidad independiente. Si una partición se satura, el servicio devuelve HTTP 503 con `application/problem+json` sin bloquear `/health` ni la otra partición.
+
+Variables relevantes:
+
+```bash
+HEAVY_PDF_THRESHOLD_BYTES=5242880
+LIGHT_BULKHEAD_WORKERS=2
+HEAVY_BULKHEAD_WORKERS=2
+LIGHT_BULKHEAD_CAPACITY=20
+HEAVY_BULKHEAD_CAPACITY=5
+```
 
 ## Ejecución con Docker
 ```bash

@@ -2,13 +2,12 @@ import io
 from time import sleep
 
 
-def assert_problem_details(response, expected_detail):
-    assert response.status_code == 400
+def assert_problem_details(response, expected_detail, expected_status=400):
+    assert response.status_code == expected_status
     assert response.content_type == "application/problem+json"
     data = response.get_json()
     assert data["type"] == "about:blank"
-    assert data["title"] == "Bad Request"
-    assert data["status"] == 400
+    assert data["status"] == expected_status
     assert expected_detail in data["detail"].lower()
     assert data["instance"] == "/internal/v1/extractions"
 
@@ -59,6 +58,7 @@ def test_extract_valid_pdf_accepts_async_job_with_correlation_id(client):
     assert data["document_id"] == "doc-123"
     assert data["correlation_id"] == "corr-123"
     assert data["status"] == "accepted"
+    assert data["bulkhead"] == "light"
 
     status = wait_for_completed_job(client, data["job_id"])
     assert status["status"] == "completed"
@@ -72,6 +72,7 @@ def test_extract_valid_pdf_accepts_async_job_with_correlation_id(client):
     assert result["status"] == "completed"
     assert "NotebookUm extractor listo" in result["text"]
     assert result["metadata"]["filename"] == "sample.pdf"
+    assert result["metadata"]["bulkhead"] == "light"
     assert result["metrics"]["duration_ms"] >= 0
     assert result["metrics"]["text_length"] == len(result["text"])
 
@@ -180,3 +181,77 @@ def test_extract_rejects_corrupted_pdf_with_problem_details(client):
     )
 
     assert_problem_details(response, "invalid pdf")
+
+
+def test_heavy_bulkhead_saturation_rejects_heavy_job_with_problem_details(app, client):
+    app.config["HEAVY_PDF_THRESHOLD_BYTES"] = 1
+    app.config["HEAVY_BULKHEAD_CAPACITY"] = 0
+
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("heavy")),
+                "heavy.pdf",
+                "application/pdf",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert_problem_details(response, "bulkhead is saturated", expected_status=503)
+
+
+def test_saturated_heavy_bulkhead_does_not_block_light_jobs(app, client):
+    app.config["HEAVY_PDF_THRESHOLD_BYTES"] = 10_000
+    app.config["HEAVY_BULKHEAD_CAPACITY"] = 0
+
+    heavy_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("heavy") + b"x" * 20_000),
+                "heavy.pdf",
+                "application/pdf",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert_problem_details(heavy_response, "bulkhead is saturated", expected_status=503)
+
+    light_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("light")),
+                "light.pdf",
+                "application/pdf",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+
+    assert light_response.status_code == 202
+    assert light_response.get_json()["bulkhead"] == "light"
+
+
+def test_health_check_does_not_depend_on_saturated_extraction_bulkhead(app, client):
+    app.config["LIGHT_BULKHEAD_CAPACITY"] = 0
+
+    rejected_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("health")),
+                "health.pdf",
+                "application/pdf",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+    health_response = client.get("/health")
+
+    assert_problem_details(rejected_response, "bulkhead is saturated", expected_status=503)
+    assert health_response.status_code == 200
+    assert health_response.get_json()["status"] == "ok"

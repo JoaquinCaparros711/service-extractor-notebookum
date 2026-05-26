@@ -13,6 +13,19 @@ from uuid import uuid4
 from app.services.pdf_service import PDFExtractionService
 
 
+class BulkheadCapacityError(RuntimeError):
+    """Raised when a bulkhead partition has no available capacity."""
+
+
+@dataclass(frozen=True)
+class BulkheadConfig:
+    """Runtime limits for a bulkhead partition."""
+
+    name: str
+    max_workers: int
+    max_active_jobs: int
+
+
 @dataclass
 class ExtractionJob:
     """State for an asynchronous extraction job."""
@@ -24,6 +37,7 @@ class ExtractionJob:
     filename: str
     content_type: str
     size_bytes: int
+    bulkhead: str
     created_at: str
     updated_at: str
     result: Optional[dict] = None
@@ -35,6 +49,7 @@ class ExtractionJob:
             "document_id": self.document_id,
             "correlation_id": self.correlation_id,
             "status": self.status,
+            "bulkhead": self.bulkhead,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -46,10 +61,11 @@ class ExtractionJob:
 class ExtractionJobStore:
     """Small in-memory job store for the first async extractor iteration."""
 
-    def __init__(self, max_workers: int = 4):
+    def __init__(self):
         self._jobs: Dict[str, ExtractionJob] = {}
         self._lock = Lock()
-        self._executor = ThreadPoolExecutor(max_workers=max_workers)
+        self._executors: Dict[str, ThreadPoolExecutor] = {}
+        self._active_jobs: Dict[str, int] = {}
 
     def create_job(
         self,
@@ -58,24 +74,37 @@ class ExtractionJobStore:
         correlation_id: str,
         filename: str,
         content_type: str,
+        bulkhead_config: BulkheadConfig,
     ) -> ExtractionJob:
         now = self._now()
-        job = ExtractionJob(
-            job_id=str(uuid4()),
-            document_id=document_id,
-            correlation_id=correlation_id,
-            status="accepted",
-            filename=filename,
-            content_type=content_type,
-            size_bytes=len(pdf_bytes),
-            created_at=now,
-            updated_at=now,
-        )
-
         with self._lock:
-            self._jobs[job.job_id] = job
+            active_jobs = self._active_jobs.get(bulkhead_config.name, 0)
+            if active_jobs >= bulkhead_config.max_active_jobs:
+                raise BulkheadCapacityError(
+                    f"The {bulkhead_config.name} extraction bulkhead is saturated."
+                )
 
-        self._executor.submit(self._process_job, job.job_id, pdf_bytes)
+            executor = self._executors.get(bulkhead_config.name)
+            if executor is None:
+                executor = ThreadPoolExecutor(max_workers=bulkhead_config.max_workers)
+                self._executors[bulkhead_config.name] = executor
+
+            job = ExtractionJob(
+                job_id=str(uuid4()),
+                document_id=document_id,
+                correlation_id=correlation_id,
+                status="accepted",
+                filename=filename,
+                content_type=content_type,
+                size_bytes=len(pdf_bytes),
+                bulkhead=bulkhead_config.name,
+                created_at=now,
+                updated_at=now,
+            )
+            self._jobs[job.job_id] = job
+            self._active_jobs[bulkhead_config.name] = active_jobs + 1
+
+        executor.submit(self._process_job, job.job_id, pdf_bytes)
         return job
 
     def get_job(self, job_id: str) -> Optional[ExtractionJob]:
@@ -103,6 +132,7 @@ class ExtractionJobStore:
                     "filename": job.filename,
                     "content_type": job.content_type,
                     "size_bytes": job.size_bytes,
+                    "bulkhead": job.bulkhead,
                     "extraction_strategy": extraction.strategy,
                 },
                 "metrics": {
@@ -113,6 +143,8 @@ class ExtractionJobStore:
             self._update_job(job_id, status="completed", result=result, error=None)
         except ValueError as exc:
             self._update_job(job_id, status="failed", error=str(exc))
+        finally:
+            self._release_bulkhead(job_id)
 
     def _update_job(
         self,
@@ -131,6 +163,15 @@ class ExtractionJobStore:
                 job.result = result
             if error is not None:
                 job.error = error
+
+    def _release_bulkhead(self, job_id: str) -> None:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return
+
+            active_jobs = self._active_jobs.get(job.bulkhead, 0)
+            self._active_jobs[job.bulkhead] = max(0, active_jobs - 1)
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
