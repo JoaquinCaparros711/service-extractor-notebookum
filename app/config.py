@@ -15,3 +15,8 @@ class Config:
     RATE_LIMIT_REQUESTS = int(os.environ.get("RATE_LIMIT_REQUESTS", 60))
     RATE_LIMIT_WINDOW_SECONDS = int(os.environ.get("RATE_LIMIT_WINDOW_SECONDS", 60))
     RATE_LIMIT_CLIENT_HEADER = os.environ.get("RATE_LIMIT_CLIENT_HEADER", "X-Client-ID")
+    STRANGLER_CONTRACT_VERSION = os.environ.get("STRANGLER_CONTRACT_VERSION", "v1")
+    STRANGLER_MONOLITH_CLIENT_ID = os.environ.get(
+        "STRANGLER_MONOLITH_CLIENT_ID",
+        "notebookum-monolith",
+    )

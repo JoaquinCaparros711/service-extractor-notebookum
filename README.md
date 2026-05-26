@@ -105,6 +105,52 @@ RATE_LIMIT_WINDOW_SECONDS=60
 RATE_LIMIT_CLIENT_HEADER=X-Client-ID
 ```
 
+## Strangler Pattern
+
+El microservicio expone un contrato interno para que el monolito pueda validar que la extracción externa está lista antes de redirigir tráfico desde el extractor local.
+
+### GET `/internal/v1/strangler/contract`
+
+Devuelve el contrato operativo que debe consumir el adaptador del monolito:
+
+```json
+{
+  "service": "service-extractor-notebookum",
+  "status": "ready",
+  "pattern": "strangler",
+  "contract_version": "v1",
+  "recommended_client_id": "notebookum-monolith",
+  "fallback_owner": "notebookum-monolith",
+  "endpoints": {
+    "create_extraction": {
+      "method": "POST",
+      "path": "/internal/v1/extractions",
+      "success_status": 202
+    },
+    "get_status": {
+      "method": "GET",
+      "path": "/internal/v1/extractions/{job_id}",
+      "success_status": 200
+    },
+    "get_result": {
+      "method": "GET",
+      "path": "/internal/v1/extractions/{job_id}/result",
+      "success_status": 200,
+      "pending_status": 202
+    }
+  }
+}
+```
+
+Durante la migración, el fallback local y el circuit breaker pertenecen al consumidor (`notebookum-monolith`). Este servicio mantiene estable el contrato de extracción, rate limit, estados de job y errores `application/problem+json`.
+
+Variables relevantes:
+
+```bash
+STRANGLER_CONTRACT_VERSION=v1
+STRANGLER_MONOLITH_CLIENT_ID=notebookum-monolith
+```
+
 ## Ejecución con Docker
 ```bash
 docker-compose up -d --build
