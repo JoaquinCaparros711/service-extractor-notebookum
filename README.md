@@ -68,6 +68,33 @@ Devuelve el resultado cuando el trabajo está `completed`. Si todavía está pen
 }
 ```
 
+### GET `/internal/v1/extractions/{job_id}/audit`
+
+Devuelve auditoría técnica sin exponer el texto extraído ni contenido del PDF.
+
+```json
+{
+  "job_id": "1f0e5f6a-8a2b-47fd-a902-f4e63017cf95",
+  "correlation_id": "corr-123",
+  "status": "completed",
+  "event_type": "extraction.completed",
+  "audit_metadata": {
+    "filename": "documento.pdf",
+    "content_type": "application/pdf",
+    "size_bytes": 12345,
+    "bulkhead": "light",
+    "pdf_retained": false
+  },
+  "metrics": {
+    "duration_ms": 120.5,
+    "size_bytes": 12345,
+    "status": "completed",
+    "extraction_strategy": "docling"
+  },
+  "failure": null
+}
+```
+
 Los errores de validación se devuelven como `application/problem+json`.
 
 Casos rechazados con HTTP 400:
@@ -105,6 +132,12 @@ Variables relevantes:
 DOCLING_CIRCUIT_FAILURE_THRESHOLD=3
 DOCLING_CIRCUIT_RESET_SECONDS=30
 ```
+
+## Observabilidad
+
+Cada transición relevante del job emite un log estructurado JSON en el logger `service_extractor.audit`. Los eventos incluyen `correlation_id`, `job_id`, `event_type`, `status`, `size_bytes`, estrategia de extracción, duración cuando aplica y tipo de falla cuando existe.
+
+El endpoint de auditoría permite diagnosticar fallos y revisar métricas sin devolver el contenido textual extraído.
 
 ## Bulkhead
 

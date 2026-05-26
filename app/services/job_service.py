@@ -10,6 +10,7 @@ from time import perf_counter
 from typing import Dict, Optional
 from uuid import uuid4
 
+from app.services.audit_service import emit_audit_event
 from app.services.pdf_service import PDFExtractionService
 
 
@@ -44,6 +45,12 @@ class ExtractionJob:
     event_type: str = "extraction.accepted"
     result: Optional[dict] = None
     error: Optional[str] = None
+    completed_at: Optional[str] = None
+    failure_type: Optional[str] = None
+    duration_ms: Optional[float] = None
+    extraction_strategy: Optional[str] = None
+    degraded: bool = False
+    circuit_breaker_state: Optional[str] = None
     status_query_count: int = 0
     result_query_count: int = 0
 
@@ -78,6 +85,34 @@ class ExtractionJob:
             "bulkhead": self.bulkhead,
             "pdf_retained": False,
         }
+
+    def to_audit_response(self) -> dict:
+        response = {
+            "job_id": self.job_id,
+            "document_id": self.document_id,
+            "correlation_id": self.correlation_id,
+            "status": self.status,
+            "event_type": self.event_type,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "completed_at": self.completed_at,
+            "audit_metadata": self.audit_metadata(),
+            "metrics": {
+                "duration_ms": self.duration_ms,
+                "size_bytes": self.size_bytes,
+                "status": self.status,
+                "extraction_strategy": self.extraction_strategy,
+                "degraded": self.degraded,
+                "circuit_breaker_state": self.circuit_breaker_state,
+            },
+            "failure": None,
+        }
+        if self.error:
+            response["failure"] = {
+                "type": self.failure_type or "extraction_error",
+                "message": self.error,
+            }
+        return response
 
 
 class ExtractionJobStore:
@@ -135,6 +170,7 @@ class ExtractionJobStore:
                 self._idempotency_index[idempotency_key] = job.job_id
             self._active_jobs[bulkhead_config.name] = active_jobs + 1
 
+        self._emit_job_event(job, "extraction.accepted")
         executor.submit(self._process_job, job.job_id, pdf_bytes)
         return job
 
@@ -159,6 +195,13 @@ class ExtractionJobStore:
             if job.status == "completed":
                 return job.to_result_response()
             return job.to_status_response()
+
+    def get_audit_snapshot(self, job_id: str) -> Optional[dict]:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            return job.to_audit_response()
 
     def _process_job(self, job_id: str, pdf_bytes: bytes) -> None:
         self._update_job(job_id, status="processing", event_type="extraction.processing")
@@ -199,6 +242,10 @@ class ExtractionJobStore:
                 event_type="extraction.completed",
                 result=result,
                 error=None,
+                duration_ms=duration_ms,
+                extraction_strategy=extraction.strategy,
+                degraded=extraction.degraded,
+                circuit_breaker_state=extraction.circuit_state,
             )
         except ValueError as exc:
             self._update_job(
@@ -206,6 +253,7 @@ class ExtractionJobStore:
                 status="failed",
                 event_type="extraction.failed",
                 error=str(exc),
+                failure_type=exc.__class__.__name__,
             )
         finally:
             self._release_bulkhead(job_id)
@@ -217,7 +265,13 @@ class ExtractionJobStore:
         event_type: str,
         result: Optional[dict] = None,
         error: Optional[str] = None,
+        failure_type: Optional[str] = None,
+        duration_ms: Optional[float] = None,
+        extraction_strategy: Optional[str] = None,
+        degraded: Optional[bool] = None,
+        circuit_breaker_state: Optional[str] = None,
     ) -> None:
+        event_job = None
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -225,12 +279,27 @@ class ExtractionJobStore:
             job.status = status
             job.event_type = event_type
             job.updated_at = self._now()
+            if status in {"completed", "failed"}:
+                job.completed_at = job.updated_at
             if result is not None:
                 job.result = result
             if error is None:
                 job.error = None
             if error is not None:
                 job.error = error
+            if failure_type is not None:
+                job.failure_type = failure_type
+            if duration_ms is not None:
+                job.duration_ms = duration_ms
+            if extraction_strategy is not None:
+                job.extraction_strategy = extraction_strategy
+            if degraded is not None:
+                job.degraded = degraded
+            if circuit_breaker_state is not None:
+                job.circuit_breaker_state = circuit_breaker_state
+            event_job = job
+
+        self._emit_job_event(event_job, event_type)
 
     def _release_bulkhead(self, job_id: str) -> None:
         with self._lock:
@@ -243,6 +312,24 @@ class ExtractionJobStore:
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()
+
+    def _emit_job_event(self, job: ExtractionJob, event_type: str) -> None:
+        emit_audit_event(
+            {
+                "event_type": event_type,
+                "job_id": job.job_id,
+                "document_id": job.document_id,
+                "correlation_id": job.correlation_id,
+                "status": job.status,
+                "size_bytes": job.size_bytes,
+                "duration_ms": job.duration_ms,
+                "extraction_strategy": job.extraction_strategy,
+                "degraded": job.degraded,
+                "circuit_breaker_state": job.circuit_breaker_state,
+                "failure_type": job.failure_type,
+                "pdf_retained": False,
+            }
+        )
 
 
 extraction_jobs = ExtractionJobStore()

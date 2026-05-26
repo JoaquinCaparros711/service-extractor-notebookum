@@ -48,3 +48,17 @@ def get_extraction_result(job_id):
         return result, 202
 
     return result, 200
+
+
+@extraction_queries_bp.get("/internal/v1/extractions/<job_id>/audit")
+def get_extraction_audit(job_id):
+    audit = extraction_jobs.get_audit_snapshot(job_id)
+    if audit is None:
+        return problem_details(
+            404,
+            "Not Found",
+            "Extraction job was not found.",
+            request.path,
+        )
+
+    return audit, 200

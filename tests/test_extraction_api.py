@@ -1,4 +1,6 @@
 import io
+import json
+import logging
 from time import sleep
 
 from app.services.job_service import extraction_jobs
@@ -518,3 +520,92 @@ def test_rate_limit_uses_configured_client_header(app, client):
     assert first_response.status_code == 202
     assert_problem_details(second_response, "rate limit", expected_status=429)
     assert "Retry-After" in second_response.headers
+
+
+def test_structured_logs_include_correlation_id(client, caplog):
+    caplog.set_level(logging.INFO, logger="service_extractor.audit")
+
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("logs correlacionados")),
+                "logs.pdf",
+                "application/pdf",
+            )
+        },
+        headers={"X-Correlation-ID": "corr-logs-123"},
+        content_type="multipart/form-data",
+    )
+    job_id = response.get_json()["job_id"]
+    wait_for_completed_job(client, job_id)
+
+    audit_logs = [
+        json.loads(record.message)
+        for record in caplog.records
+        if record.name == "service_extractor.audit"
+    ]
+
+    assert audit_logs
+    assert all(event["correlation_id"] == "corr-logs-123" for event in audit_logs)
+    assert {event["event_type"] for event in audit_logs} >= {
+        "extraction.accepted",
+        "extraction.completed",
+    }
+
+
+def test_audit_endpoint_exposes_metrics_without_pdf_content(client):
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("contenido sensible auditado")),
+                "audit.pdf",
+                "application/pdf",
+            )
+        },
+        headers={"X-Correlation-ID": "corr-audit-123"},
+        content_type="multipart/form-data",
+    )
+    job_id = response.get_json()["job_id"]
+    wait_for_completed_job(client, job_id)
+
+    audit_response = client.get(f"/internal/v1/extractions/{job_id}/audit")
+
+    assert audit_response.status_code == 200
+    audit = audit_response.get_json()
+    assert audit["correlation_id"] == "corr-audit-123"
+    assert audit["status"] == "completed"
+    assert audit["metrics"]["duration_ms"] >= 0
+    assert audit["metrics"]["size_bytes"] > 0
+    assert audit["metrics"]["extraction_strategy"] in {"basic", "docling"}
+    assert audit["audit_metadata"]["pdf_retained"] is False
+    assert "text" not in audit
+    assert "contenido sensible auditado" not in json.dumps(audit)
+
+
+def test_audit_endpoint_exposes_failure_type_without_pdf_content(client):
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_without_extractable_text()),
+                "failed-audit.pdf",
+                "application/pdf",
+            )
+        },
+        headers={"X-Correlation-ID": "corr-failed-audit"},
+        content_type="multipart/form-data",
+    )
+    job_id = response.get_json()["job_id"]
+    wait_for_completed_job(client, job_id)
+
+    audit_response = client.get(f"/internal/v1/extractions/{job_id}/audit")
+
+    assert audit_response.status_code == 200
+    audit = audit_response.get_json()
+    assert audit["status"] == "failed"
+    assert audit["event_type"] == "extraction.failed"
+    assert audit["failure"]["type"] == "ValueError"
+    assert "no extractable text" in audit["failure"]["message"].lower()
+    assert "text" not in audit
