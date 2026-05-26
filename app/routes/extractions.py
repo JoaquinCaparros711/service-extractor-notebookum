@@ -1,4 +1,4 @@
-"""Extraction command and query routes."""
+"""Extraction command routes."""
 
 from __future__ import annotations
 
@@ -14,10 +14,10 @@ from app.services.job_service import (
 from app.services.rate_limit_service import rate_limiter
 from app.utils.errors import problem_details
 
-extractions_bp = Blueprint("extractions", __name__)
+extraction_commands_bp = Blueprint("extraction_commands", __name__)
 
 
-@extractions_bp.post("/internal/v1/extractions")
+@extraction_commands_bp.post("/internal/v1/extractions")
 def extract_pdf():
     rate_limit_response = _check_rate_limit()
     if rate_limit_response is not None:
@@ -79,45 +79,6 @@ def extract_pdf():
         return problem_details(503, "Service Unavailable", str(exc), request.path)
 
     return job.to_status_response(), 202
-
-
-@extractions_bp.get("/internal/v1/extractions/<job_id>")
-def get_extraction_status(job_id):
-    job = extraction_jobs.get_job(job_id)
-    if job is None:
-        return problem_details(
-            404,
-            "Not Found",
-            "Extraction job was not found.",
-            request.path,
-        )
-
-    return job.to_status_response(), 200
-
-
-@extractions_bp.get("/internal/v1/extractions/<job_id>/result")
-def get_extraction_result(job_id):
-    job = extraction_jobs.get_job(job_id)
-    if job is None:
-        return problem_details(
-            404,
-            "Not Found",
-            "Extraction job was not found.",
-            request.path,
-        )
-
-    if job.status == "failed":
-        return problem_details(
-            400,
-            "Bad Request",
-            job.error or "Extraction failed.",
-            request.path,
-        )
-
-    if job.status != "completed":
-        return job.to_status_response(), 202
-
-    return job.result, 200
 
 
 def _select_bulkhead(size_bytes):

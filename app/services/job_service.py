@@ -42,6 +42,8 @@ class ExtractionJob:
     updated_at: str
     result: Optional[dict] = None
     error: Optional[str] = None
+    status_query_count: int = 0
+    result_query_count: int = 0
 
     def to_status_response(self) -> dict:
         response = {
@@ -56,6 +58,11 @@ class ExtractionJob:
         if self.error:
             response["error"] = self.error
         return response
+
+    def to_result_response(self) -> Optional[dict]:
+        if self.result is None:
+            return None
+        return dict(self.result)
 
 
 class ExtractionJobStore:
@@ -110,6 +117,24 @@ class ExtractionJobStore:
     def get_job(self, job_id: str) -> Optional[ExtractionJob]:
         with self._lock:
             return self._jobs.get(job_id)
+
+    def get_status_snapshot(self, job_id: str) -> Optional[dict]:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            job.status_query_count += 1
+            return job.to_status_response()
+
+    def get_result_snapshot(self, job_id: str) -> Optional[dict]:
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None:
+                return None
+            job.result_query_count += 1
+            if job.status == "completed":
+                return job.to_result_response()
+            return job.to_status_response()
 
     def _process_job(self, job_id: str, pdf_bytes: bytes) -> None:
         self._update_job(job_id, status="processing")

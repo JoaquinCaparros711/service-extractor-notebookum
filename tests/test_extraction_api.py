@@ -1,6 +1,8 @@
 import io
 from time import sleep
 
+from app.services.job_service import extraction_jobs
+
 
 def assert_problem_details(response, expected_detail, expected_status=400):
     assert response.status_code == expected_status
@@ -143,6 +145,62 @@ def test_extract_result_does_not_require_resending_pdf(client):
 
     assert result_response.status_code == 200
     assert "resultado sin reenviar" in result_response.get_json()["text"]
+
+
+def test_status_query_does_not_mutate_job_state(client):
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("consulta no muta estado")),
+                "sample.pdf",
+                "application/pdf",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+    job_id = response.get_json()["job_id"]
+    wait_for_completed_job(client, job_id)
+    job_before = extraction_jobs.get_job(job_id)
+    updated_at_before = job_before.updated_at
+    query_count_before = job_before.status_query_count
+
+    status_response = client.get(f"/internal/v1/extractions/{job_id}")
+
+    job_after = extraction_jobs.get_job(job_id)
+    assert status_response.status_code == 200
+    assert job_after.status == "completed"
+    assert job_after.updated_at == updated_at_before
+    assert job_after.status_query_count == query_count_before + 1
+
+
+def test_completed_result_query_is_idempotent(client):
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("resultado idempotente")),
+                "sample.pdf",
+                "application/pdf",
+            )
+        },
+        content_type="multipart/form-data",
+    )
+    job_id = response.get_json()["job_id"]
+    wait_for_completed_job(client, job_id)
+    job_before = extraction_jobs.get_job(job_id)
+    updated_at_before = job_before.updated_at
+    result_query_count_before = job_before.result_query_count
+
+    first_response = client.get(f"/internal/v1/extractions/{job_id}/result")
+    second_response = client.get(f"/internal/v1/extractions/{job_id}/result")
+
+    job_after = extraction_jobs.get_job(job_id)
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_response.get_json() == second_response.get_json()
+    assert job_after.updated_at == updated_at_before
+    assert job_after.result_query_count == result_query_count_before + 2
 
 
 def test_extract_rejects_non_pdf_with_problem_details(client):

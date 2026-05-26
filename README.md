@@ -9,6 +9,11 @@ Este microservicio se encarga de **Extraer el texto de los documentos PDF** para
 
 ## Endpoint implementado
 
+El servicio separa comandos y consultas siguiendo CQRS:
+
+- Comando: crea trabajos de extracción y modifica el estado interno.
+- Consultas: leen estado o resultado sin disparar una nueva extracción.
+
 ### POST `/internal/v1/extractions`
 
 Acepta un trabajo asíncrono de extracción para un PDF válido menor o igual a 25MB.
