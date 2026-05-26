@@ -139,6 +139,78 @@ Cada transición relevante del job emite un log estructurado JSON en el logger `
 
 El endpoint de auditoría permite diagnosticar fallos y revisar métricas sin devolver el contenido textual extraído.
 
+### Historia de Usuario 10 - Observar y Auditar Extracciones (Prioridad: P3)
+
+**Descripción**: Como equipo de soporte, necesitamos trazabilidad completa de cada extracción para diagnosticar errores, medir tiempos y correlacionar solicitudes entre el monolito/API gateway y el microservicio extractor.
+
+**Criterio principal**: Todas las extracciones deben emitir registros estructurados, métricas y eventos que permitan reconstruir el flujo del trabajo sin exponer contenido del PDF.
+
+Escenarios de aceptación:
+
+- **Correlación**: Si una solicitud incluye `X-Correlation-ID` o `correlation_id` en el payload, todos los logs, eventos y respuestas relacionadas con ese job deben incluir ese mismo valor.
+- **Métricas al finalizar**: Al completar o fallar una extracción se debe registrar `duration_ms`, `size_bytes`, `status`, `extraction_strategy` y `failure_type` (cuando aplique).
+- **Auditoría técnica**: El endpoint `/internal/v1/extractions/{job_id}/audit` debe devolver metadatos técnicos y métricas sin incluir `text` ni contenido binario del PDF.
+
+Pruebas y validación:
+
+- Test de integración: enviar un POST con `X-Correlation-ID` y verificar que la respuesta inicial contiene `correlation_id`, luego consultar `/extractions/{job_id}/audit` y comprobar que todos los eventos contienen el mismo `correlation_id`.
+- Test de logs estructurados: capturar logs del logger `service_extractor.audit` y validar esquema JSON (ver más abajo).
+- Test de rendimiento: crear 100 trabajos concurrentes y verificar que las métricas de latencia y el endpoint `/health` siguen respondiendo.
+
+Esquema recomendado de log estructurado (ejemplo):
+
+```json
+{
+  "timestamp": "2026-05-26T12:00:00Z",
+  "logger": "service_extractor.audit",
+  "correlation_id": "corr-123",
+  "job_id": "1f0e5f6a-8a2b-47fd-a902-f4e63017cf95",
+  "event_type": "extraction.accepted",
+  "status": "accepted",
+  "document_id": "doc-123",
+  "size_bytes": 12345,
+  "extraction_strategy": "docling",
+  "bulkhead": "light",
+  "duration_ms": null,
+  "failure_type": null
+}
+```
+
+Métricas (Prometheus):
+
+- `extractor_jobs_total{status="completed|failed|accepted|processing"}`
+- `extractor_job_duration_seconds` (histogram) — latencias de extracción
+- `extractor_jobs_in_flight` — trabajos en ejecución por bulkhead
+- `extractor_circuit_open` (gauge) — estado del circuit breaker
+
+Trazabilidad distribuida:
+
+- Aceptar `X-Correlation-ID` y `traceparent` (W3C Trace Context) y propagar ambos a logs y eventos.
+- Incluir `correlation_id` en headers de respuesta para que el monolito/orquestador pueda correlacionar fácilmente.
+
+Retención y privacidad:
+
+- Los logs y la API de auditoría NUNCA deben contener el texto extraído ni el PDF en bruto.
+- Auditoría guarda metadatos mínimos (filename, size_bytes, strategy, status) y un ttl configurable; por defecto 30 días.
+
+Alertas operativas recomendadas:
+
+- Alerta si `extractor_jobs_in_flight` supera un umbral por más de 2 minutos.
+- Alerta si la tasa de `failed` sobrepasa 5% en un intervalo de 5 minutos.
+- Alerta si `extractor_circuit_open` permanece en `1` por más de 30s.
+
+Endpoints relevantes (resumen):
+
+- `POST /internal/v1/extractions` — crea job (aceptación rápida, incluye `correlation_id` en respuesta).
+- `GET /internal/v1/extractions/{job_id}/audit` — devuelve auditoría técnica (sin texto).
+
+Responsables de implementación:
+
+- `app/services/audit_service.py` — generar y centralizar eventos de auditoría.
+- `app/routes/extractions.py` — propagar `correlation_id` y exponer `audit` endpoint.
+- `tests/test_extraction_api.py` — añadir pruebas de integración para logs y audit endpoint.
+
+
 ## Bulkhead
 
 El servicio separa trabajos de extracción en dos particiones:
