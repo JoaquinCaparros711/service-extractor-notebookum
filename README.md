@@ -91,6 +91,20 @@ LIGHT_BULKHEAD_CAPACITY=20
 HEAVY_BULKHEAD_CAPACITY=5
 ```
 
+## Rate Limit
+
+El ingreso de trabajos se limita por consumidor interno. Por defecto, la identidad del consumidor se lee desde `X-Client-ID`; si no se envía, se usa `anonymous`.
+
+Cuando un consumidor supera su cuota, el servicio responde HTTP 429 con `application/problem+json` e incluye `Retry-After` para indicar cuándo reintentar.
+
+Variables relevantes:
+
+```bash
+RATE_LIMIT_REQUESTS=60
+RATE_LIMIT_WINDOW_SECONDS=60
+RATE_LIMIT_CLIENT_HEADER=X-Client-ID
+```
+
 ## Ejecución con Docker
 ```bash
 docker-compose up -d --build

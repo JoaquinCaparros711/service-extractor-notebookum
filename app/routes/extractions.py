@@ -11,6 +11,7 @@ from app.services.job_service import (
     BulkheadConfig,
     extraction_jobs,
 )
+from app.services.rate_limit_service import rate_limiter
 from app.utils.errors import problem_details
 
 extractions_bp = Blueprint("extractions", __name__)
@@ -18,6 +19,10 @@ extractions_bp = Blueprint("extractions", __name__)
 
 @extractions_bp.post("/internal/v1/extractions")
 def extract_pdf():
+    rate_limit_response = _check_rate_limit()
+    if rate_limit_response is not None:
+        return rate_limit_response
+
     uploaded_file = request.files.get("file")
     if uploaded_file is None:
         return problem_details(
@@ -128,3 +133,24 @@ def _select_bulkhead(size_bytes):
         max_workers=current_app.config["LIGHT_BULKHEAD_WORKERS"],
         max_active_jobs=current_app.config["LIGHT_BULKHEAD_CAPACITY"],
     )
+
+
+def _check_rate_limit():
+    client_header = current_app.config["RATE_LIMIT_CLIENT_HEADER"]
+    client_id = request.headers.get(client_header, "anonymous")
+    decision = rate_limiter.check(
+        client_id=client_id,
+        limit=current_app.config["RATE_LIMIT_REQUESTS"],
+        window_seconds=current_app.config["RATE_LIMIT_WINDOW_SECONDS"],
+    )
+    if decision.allowed:
+        return None
+
+    response = problem_details(
+        429,
+        "Too Many Requests",
+        "Rate limit exceeded for extraction job creation.",
+        request.path,
+    )
+    response.headers["Retry-After"] = str(decision.retry_after)
+    return response

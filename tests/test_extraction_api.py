@@ -255,3 +255,107 @@ def test_health_check_does_not_depend_on_saturated_extraction_bulkhead(app, clie
     assert_problem_details(rejected_response, "bulkhead is saturated", expected_status=503)
     assert health_response.status_code == 200
     assert health_response.get_json()["status"] == "ok"
+
+
+def test_rate_limit_rejects_same_client_after_quota(app, client):
+    app.config["RATE_LIMIT_REQUESTS"] = 1
+    app.config["RATE_LIMIT_WINDOW_SECONDS"] = 60
+    headers = {"X-Client-ID": "rate-limited-client"}
+
+    first_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("primer intento")),
+                "first.pdf",
+                "application/pdf",
+            )
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    second_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("segundo intento")),
+                "second.pdf",
+                "application/pdf",
+            )
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+
+    assert first_response.status_code == 202
+    assert_problem_details(second_response, "rate limit", expected_status=429)
+    assert int(second_response.headers["Retry-After"]) > 0
+
+
+def test_rate_limit_allows_different_client_within_own_quota(app, client):
+    app.config["RATE_LIMIT_REQUESTS"] = 1
+    app.config["RATE_LIMIT_WINDOW_SECONDS"] = 60
+
+    first_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("cliente a")),
+                "a.pdf",
+                "application/pdf",
+            )
+        },
+        headers={"X-Client-ID": "client-a"},
+        content_type="multipart/form-data",
+    )
+    second_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("cliente b")),
+                "b.pdf",
+                "application/pdf",
+            )
+        },
+        headers={"X-Client-ID": "client-b"},
+        content_type="multipart/form-data",
+    )
+
+    assert first_response.status_code == 202
+    assert second_response.status_code == 202
+
+
+def test_rate_limit_uses_configured_client_header(app, client):
+    app.config["RATE_LIMIT_REQUESTS"] = 1
+    app.config["RATE_LIMIT_WINDOW_SECONDS"] = 60
+    app.config["RATE_LIMIT_CLIENT_HEADER"] = "X-Service-Client"
+    headers = {"X-Service-Client": "custom-client"}
+
+    first_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("custom uno")),
+                "one.pdf",
+                "application/pdf",
+            )
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    second_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("custom dos")),
+                "two.pdf",
+                "application/pdf",
+            )
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+
+    assert first_response.status_code == 202
+    assert_problem_details(second_response, "rate limit", expected_status=429)
+    assert "Retry-After" in second_response.headers
