@@ -43,6 +43,15 @@ def make_pdf_bytes(text="NotebookUm extractor listo"):
     )
 
 
+def make_pdf_without_extractable_text():
+    return (
+        b"%PDF-1.4\n"
+        b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+        b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+        b"trailer\n<< /Root 1 0 R >>\n%%EOF"
+    )
+
+
 def test_extract_valid_pdf_accepts_async_job_with_correlation_id(client):
     response = client.post(
         "/internal/v1/extractions",
@@ -60,10 +69,13 @@ def test_extract_valid_pdf_accepts_async_job_with_correlation_id(client):
     assert data["document_id"] == "doc-123"
     assert data["correlation_id"] == "corr-123"
     assert data["status"] == "accepted"
+    assert data["event_type"] == "extraction.accepted"
     assert data["bulkhead"] == "light"
+    assert data["audit_metadata"]["pdf_retained"] is False
 
     status = wait_for_completed_job(client, data["job_id"])
     assert status["status"] == "completed"
+    assert status["event_type"] == "extraction.completed"
 
     result_response = client.get(f"/internal/v1/extractions/{data['job_id']}/result")
     assert result_response.status_code == 200
@@ -72,9 +84,11 @@ def test_extract_valid_pdf_accepts_async_job_with_correlation_id(client):
     assert result["document_id"] == "doc-123"
     assert result["correlation_id"] == "corr-123"
     assert result["status"] == "completed"
+    assert result["event_type"] == "extraction.completed"
     assert "NotebookUm extractor listo" in result["text"]
     assert result["metadata"]["filename"] == "sample.pdf"
     assert result["metadata"]["bulkhead"] == "light"
+    assert result["metadata"]["pdf_retained"] is False
     assert result["metrics"]["duration_ms"] >= 0
     assert result["metrics"]["text_length"] == len(result["text"])
 
@@ -201,6 +215,93 @@ def test_completed_result_query_is_idempotent(client):
     assert first_response.get_json() == second_response.get_json()
     assert job_after.updated_at == updated_at_before
     assert job_after.result_query_count == result_query_count_before + 2
+
+
+def test_saga_completed_event_allows_orchestrator_to_continue(client):
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("saga completada")),
+                "saga.pdf",
+                "application/pdf",
+            )
+        },
+        headers={"Idempotency-Key": "saga-completed-key"},
+        content_type="multipart/form-data",
+    )
+    job_id = response.get_json()["job_id"]
+
+    status = wait_for_completed_job(client, job_id)
+    result_response = client.get(f"/internal/v1/extractions/{job_id}/result")
+
+    assert status["event_type"] == "extraction.completed"
+    assert result_response.status_code == 200
+    assert result_response.get_json()["event_type"] == "extraction.completed"
+
+
+def test_saga_failed_event_exposes_compensation_metadata(client):
+    response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_without_extractable_text()),
+                "without-text.pdf",
+                "application/pdf",
+            )
+        },
+        headers={"Idempotency-Key": "saga-failed-key"},
+        content_type="multipart/form-data",
+    )
+    job_id = response.get_json()["job_id"]
+
+    status = wait_for_completed_job(client, job_id)
+    result_response = client.get(f"/internal/v1/extractions/{job_id}/result")
+
+    assert status["status"] == "failed"
+    assert status["event_type"] == "extraction.failed"
+    assert status["audit_metadata"]["filename"] == "without-text.pdf"
+    assert status["audit_metadata"]["pdf_retained"] is False
+    assert "no extractable text" in status["error"].lower()
+    assert result_response.status_code == 400
+    assert result_response.content_type == "application/problem+json"
+
+
+def test_idempotency_key_returns_same_job_without_duplicate_processing(client):
+    headers = {"Idempotency-Key": "same-saga-command"}
+    payload = {
+        "file": (
+            io.BytesIO(make_pdf_bytes("comando idempotente")),
+            "idempotent.pdf",
+            "application/pdf",
+        )
+    }
+    first_response = client.post(
+        "/internal/v1/extractions",
+        data=payload,
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+    second_response = client.post(
+        "/internal/v1/extractions",
+        data={
+            "file": (
+                io.BytesIO(make_pdf_bytes("contenido ignorado por idempotencia")),
+                "idempotent-retry.pdf",
+                "application/pdf",
+            )
+        },
+        headers=headers,
+        content_type="multipart/form-data",
+    )
+
+    first = first_response.get_json()
+    second = second_response.get_json()
+    assert first_response.status_code == 202
+    assert second_response.status_code == 202
+    assert first["job_id"] == second["job_id"]
+    assert first["idempotency_key"] == "same-saga-command"
+    assert second["idempotency_key"] == "same-saga-command"
 
 
 def test_extract_rejects_non_pdf_with_problem_details(client):

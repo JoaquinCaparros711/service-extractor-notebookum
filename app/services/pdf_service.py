@@ -36,7 +36,7 @@ class PDFExtractionService:
         if basic_text:
             return ExtractionResult(text=basic_text, strategy="basic")
 
-        return ExtractionResult(text="PDF content extracted successfully.", strategy="basic")
+        raise ValueError("PDF contains no extractable text.")
 
     def _extract_with_docling(self, pdf_bytes: bytes) -> Optional[str]:
         try:

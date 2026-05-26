@@ -74,6 +74,10 @@ def extract_pdf():
             filename=uploaded_file.filename or "",
             content_type=uploaded_file.content_type,
             bulkhead_config=bulkhead_config,
+            idempotency_key=(
+                request.headers.get("Idempotency-Key")
+                or request.form.get("idempotency_key")
+            ),
         )
     except BulkheadCapacityError as exc:
         return problem_details(503, "Service Unavailable", str(exc), request.path)

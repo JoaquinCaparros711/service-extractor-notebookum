@@ -77,6 +77,19 @@ Casos rechazados con HTTP 400:
 - El PDF supera el límite configurado de 25MB.
 - El archivo declara ser PDF pero el contenido está corrupto o no tiene firma PDF válida.
 
+## Saga
+
+El extractor participa en la saga documental exponiendo eventos de estado en las respuestas de job:
+
+- `extraction.accepted`: el comando fue aceptado.
+- `extraction.processing`: el trabajo está en ejecución.
+- `extraction.completed`: el orquestador puede continuar con generación de resumen.
+- `extraction.failed`: el orquestador debe marcar el documento como fallido o ejecutar compensación.
+
+Para reintentos seguros, el comando acepta `Idempotency-Key` como header o `idempotency_key` como campo de formulario. Repetir el mismo comando con la misma clave devuelve el mismo `job_id` sin duplicar procesamiento.
+
+Las respuestas incluyen `audit_metadata` con `pdf_retained: false`; el servicio no conserva el PDF original después de aceptar el trabajo.
+
 ## Bulkhead
 
 El servicio separa trabajos de extracción en dos particiones:
