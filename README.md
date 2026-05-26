@@ -11,7 +11,7 @@ Este microservicio se encarga de **Extraer el texto de los documentos PDF** para
 
 ### POST `/internal/v1/extractions`
 
-Extrae texto de un PDF válido menor o igual a 25MB.
+Acepta un trabajo asíncrono de extracción para un PDF válido menor o igual a 25MB.
 
 ```bash
 curl -X POST http://localhost:5001/internal/v1/extractions \
@@ -24,6 +24,26 @@ Respuesta exitosa:
 
 ```json
 {
+  "job_id": "1f0e5f6a-8a2b-47fd-a902-f4e63017cf95",
+  "document_id": "doc-123",
+  "correlation_id": "corr-123",
+  "status": "accepted",
+  "created_at": "2026-05-26T12:00:00+00:00",
+  "updated_at": "2026-05-26T12:00:00+00:00"
+}
+```
+
+### GET `/internal/v1/extractions/{job_id}`
+
+Consulta el estado del trabajo. Los estados posibles son `accepted`, `processing`, `completed` y `failed`.
+
+### GET `/internal/v1/extractions/{job_id}/result`
+
+Devuelve el resultado cuando el trabajo está `completed`. Si todavía está pendiente, devuelve HTTP 202 con el estado actual.
+
+```json
+{
+  "job_id": "1f0e5f6a-8a2b-47fd-a902-f4e63017cf95",
   "document_id": "doc-123",
   "correlation_id": "corr-123",
   "status": "completed",

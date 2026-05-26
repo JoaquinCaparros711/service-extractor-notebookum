@@ -1,13 +1,12 @@
-"""Extraction command routes."""
+"""Extraction command and query routes."""
 
 from __future__ import annotations
 
-from time import perf_counter
 from uuid import uuid4
 
 from flask import Blueprint, current_app, request
 
-from app.services.pdf_service import PDFExtractionService
+from app.services.job_service import extraction_jobs
 from app.utils.errors import problem_details
 
 extractions_bp = Blueprint("extractions", __name__)
@@ -15,7 +14,6 @@ extractions_bp = Blueprint("extractions", __name__)
 
 @extractions_bp.post("/internal/v1/extractions")
 def extract_pdf():
-    started_at = perf_counter()
     uploaded_file = request.files.get("file")
     if uploaded_file is None:
         return problem_details(
@@ -43,6 +41,14 @@ def extract_pdf():
             request.path,
         )
 
+    if not pdf_bytes.startswith(b"%PDF"):
+        return problem_details(
+            400,
+            "Bad Request",
+            "Invalid PDF file: corrupted or unsupported content.",
+            request.path,
+        )
+
     document_id = request.form.get("document_id") or str(uuid4())
     correlation_id = (
         request.headers.get("X-Correlation-ID")
@@ -50,25 +56,40 @@ def extract_pdf():
         or str(uuid4())
     )
 
-    try:
-        result = PDFExtractionService().extract_text(pdf_bytes)
-    except ValueError as exc:
-        return problem_details(400, "Bad Request", str(exc), request.path)
+    job = extraction_jobs.create_job(
+        pdf_bytes=pdf_bytes,
+        document_id=document_id,
+        correlation_id=correlation_id,
+        filename=uploaded_file.filename or "",
+        content_type=uploaded_file.content_type,
+    )
+    return job.to_status_response(), 202
 
-    duration_ms = round((perf_counter() - started_at) * 1000, 2)
-    return {
-        "document_id": document_id,
-        "correlation_id": correlation_id,
-        "status": "completed",
-        "text": result.text,
-        "metadata": {
-            "filename": uploaded_file.filename,
-            "content_type": uploaded_file.content_type,
-            "size_bytes": len(pdf_bytes),
-            "extraction_strategy": result.strategy,
-        },
-        "metrics": {
-            "duration_ms": duration_ms,
-            "text_length": result.text_length,
-        },
-    }, 200
+
+@extractions_bp.get("/internal/v1/extractions/<job_id>")
+def get_extraction_status(job_id):
+    job = extraction_jobs.get_job(job_id)
+    if job is None:
+        return problem_details(404, "Not Found", "Extraction job was not found.", request.path)
+
+    return job.to_status_response(), 200
+
+
+@extractions_bp.get("/internal/v1/extractions/<job_id>/result")
+def get_extraction_result(job_id):
+    job = extraction_jobs.get_job(job_id)
+    if job is None:
+        return problem_details(404, "Not Found", "Extraction job was not found.", request.path)
+
+    if job.status == "failed":
+        return problem_details(
+            400,
+            "Bad Request",
+            job.error or "Extraction failed.",
+            request.path,
+        )
+
+    if job.status != "completed":
+        return job.to_status_response(), 202
+
+    return job.result, 200
