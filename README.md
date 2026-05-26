@@ -90,6 +90,22 @@ Para reintentos seguros, el comando acepta `Idempotency-Key` como header o `idem
 
 Las respuestas incluyen `audit_metadata` con `pdf_retained: false`; el servicio no conserva el PDF original después de aceptar el trabajo.
 
+## Circuit Breaker
+
+El motor principal de extracción (`docling`) está protegido con Circuit Breaker:
+
+- Si Docling falla repetidamente, el circuito pasa a `open`.
+- Con el circuito abierto, el servicio evita invocar Docling y responde rápido usando el parser básico cuando el PDF lo permite.
+- Las extracciones por fallback básico se marcan con `degraded: true`.
+- Después de la ventana de recuperación, el circuito permite una prueba en estado `half_open`; si funciona, vuelve a `closed`.
+
+Variables relevantes:
+
+```bash
+DOCLING_CIRCUIT_FAILURE_THRESHOLD=3
+DOCLING_CIRCUIT_RESET_SECONDS=30
+```
+
 ## Bulkhead
 
 El servicio separa trabajos de extracción en dos particiones:

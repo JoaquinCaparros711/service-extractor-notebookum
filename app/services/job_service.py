@@ -184,6 +184,8 @@ class ExtractionJobStore:
                     "size_bytes": job.size_bytes,
                     "bulkhead": job.bulkhead,
                     "extraction_strategy": extraction.strategy,
+                    "degraded": extraction.degraded,
+                    "circuit_breaker_state": extraction.circuit_state,
                     "pdf_retained": False,
                 },
                 "metrics": {

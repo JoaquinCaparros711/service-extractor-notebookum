@@ -20,3 +20,9 @@ class Config:
         "STRANGLER_MONOLITH_CLIENT_ID",
         "notebookum-monolith",
     )
+    DOCLING_CIRCUIT_FAILURE_THRESHOLD = int(
+        os.environ.get("DOCLING_CIRCUIT_FAILURE_THRESHOLD", 3)
+    )
+    DOCLING_CIRCUIT_RESET_SECONDS = float(
+        os.environ.get("DOCLING_CIRCUIT_RESET_SECONDS", 30)
+    )

@@ -8,6 +8,10 @@ import re
 import tempfile
 from typing import Optional
 
+from flask import current_app, has_app_context
+
+from app.services.circuit_breaker import docling_circuit_breaker
+
 
 @dataclass(frozen=True)
 class ExtractionResult:
@@ -15,6 +19,8 @@ class ExtractionResult:
 
     text: str
     strategy: str
+    degraded: bool = False
+    circuit_state: str = "closed"
 
     @property
     def text_length(self) -> int:
@@ -28,20 +34,34 @@ class PDFExtractionService:
         if not pdf_bytes.startswith(b"%PDF"):
             raise ValueError("Invalid PDF file: corrupted or unsupported content.")
 
+        self._configure_docling_circuit()
         docling_text = self._extract_with_docling(pdf_bytes)
         if docling_text:
-            return ExtractionResult(text=docling_text, strategy="docling")
+            return ExtractionResult(
+                text=docling_text,
+                strategy="docling",
+                circuit_state=docling_circuit_breaker.state,
+            )
 
         basic_text = self._extract_with_basic_parser(pdf_bytes)
         if basic_text:
-            return ExtractionResult(text=basic_text, strategy="basic")
+            return ExtractionResult(
+                text=basic_text,
+                strategy="basic",
+                degraded=True,
+                circuit_state=docling_circuit_breaker.state,
+            )
 
         raise ValueError("PDF contains no extractable text.")
 
     def _extract_with_docling(self, pdf_bytes: bytes) -> Optional[str]:
+        if not docling_circuit_breaker.allow_request():
+            return None
+
         try:
             from docling.document_converter import DocumentConverter
         except ImportError:
+            docling_circuit_breaker.record_failure()
             return None
 
         temp_path: Optional[Path] = None
@@ -62,12 +82,23 @@ class PDFExtractionService:
                 text = getattr(result, "text", "")
 
             normalized = str(text).strip() if text is not None else ""
+            docling_circuit_breaker.record_success()
             return normalized or None
         except (ValueError, OSError, RuntimeError):
+            docling_circuit_breaker.record_failure()
             return None
         finally:
             if temp_path and temp_path.exists():
                 temp_path.unlink(missing_ok=True)
+
+    def _configure_docling_circuit(self) -> None:
+        if not has_app_context():
+            return
+
+        docling_circuit_breaker.configure(
+            failure_threshold=current_app.config["DOCLING_CIRCUIT_FAILURE_THRESHOLD"],
+            reset_seconds=current_app.config["DOCLING_CIRCUIT_RESET_SECONDS"],
+        )
 
     def _extract_with_basic_parser(self, pdf_bytes: bytes) -> Optional[str]:
         content = pdf_bytes.decode("latin-1", errors="ignore")
