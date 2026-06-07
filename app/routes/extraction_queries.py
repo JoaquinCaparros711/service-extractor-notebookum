@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from flask import Blueprint, request
+import json
+
+from flask import Blueprint, Response, request
 
 from app.services.job_service import extraction_jobs
 from app.utils.errors import problem_details
@@ -48,6 +50,24 @@ def get_extraction_result(job_id):
         return result, 202
 
     return result, 200
+
+
+@extraction_queries_bp.get("/internal/v1/extractions/<job_id>/download")
+def download_extraction(job_id):
+    job = extraction_jobs.get_job(job_id)
+    if job is None:
+        return problem_details(404, "Not Found", "Extraction job was not found.", request.path)
+    if job.status != "completed":
+        return problem_details(202, "Processing", "Extraction not completed yet.", request.path)
+
+    data = extraction_jobs.get_result_snapshot(job_id)
+    json_bytes = json.dumps(data, ensure_ascii=False, indent=2).encode("utf-8")
+    filename = f"extraction_{job_id[:8]}.json"
+    return Response(
+        json_bytes,
+        mimetype="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @extraction_queries_bp.get("/internal/v1/extractions/<job_id>/audit")

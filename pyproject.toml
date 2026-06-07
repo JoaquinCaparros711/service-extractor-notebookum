@@ -6,10 +6,13 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.1",
+    "flask-cors>=4.0",
     "docling>=1.0",
     "granian>=1.0",
     "werkzeug>=3.0",
     "python-dotenv>=1.0",
+    "redis>=5.0",
+    "pdfplumber>=0.11",
 ]
 
 [tool.pytest.ini_options]

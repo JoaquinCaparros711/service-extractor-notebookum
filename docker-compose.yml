@@ -1,28 +1,43 @@
-services: 
+services:
     extractor:
-
+        build:
+            context: .
+            dockerfile: Dockerfile
         image: notebookum-extractor:v1.0.0
         restart: unless-stopped
-        # LOAD BALANCER PATTERN
+        # LOAD BALANCER PATTERN - 1 replica: job store is in-memory, multi-replica breaks GET by ID
         deploy:
-            replicas: 2
+            replicas: 1
         networks:
-            - notebookum-network
+            notebookum-network:
+                aliases:
+                    - extractor.universidad.localhost
         labels:
             - "traefik.enable=true"
-            - "traefik.http.routers.extractor.rule=Host(`extractor.internal`)"
+            - "traefik.http.routers.extractor.rule=Host(`extractor.universidad.localhost`)"
+            - "traefik.http.routers.extractor.entryPoints=https"
+            - "traefik.http.routers.extractor.tls=true"
+            - "traefik.http.routers.extractor.middlewares=cb-extractor,bulkhead-extractor,cors-extractor"
+            # CORS via Traefik (para dashboard desde file://)
+            - "traefik.http.middlewares.cors-extractor.headers.accesscontrolalloworiginlist=*"
+            - "traefik.http.middlewares.cors-extractor.headers.accesscontrolallowmethods=GET,POST,OPTIONS"
+            - "traefik.http.middlewares.cors-extractor.headers.accesscontrolallowheaders=Content-Type,Authorization"
+            - "traefik.http.middlewares.cors-extractor.headers.addvaryheader=true"
             - "traefik.http.services.extractor.loadbalancer.server.port=5000"
             # CIRCUIT BREAKER PATTERN: Open circuit if error rate > 50%
             - "traefik.http.middlewares.cb-extractor.circuitbreaker.expression=NetworkErrorRatio() > 0.5"
             # BULKHEAD PATTERN: Limit concurrent connections to 20
             - "traefik.http.middlewares.bulkhead-extractor.inflightreq.amount=20"
-            - "traefik.http.routers.extractor.middlewares=cb-extractor,bulkhead-extractor"
         # volumes:
         #     - ./app:/app/app:ro
         #     - ./main.py:/app/main.py:ro
         environment:
             - FLASK_ENV=development
             - MAX_UPLOAD_SIZE=26214400
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - REDIS_PASSWORD=${REDIS_PASSWORD:-Rediscontra123!}
+            - EXTRACTION_TTL=3600
 
 networks:
     notebookum-network:

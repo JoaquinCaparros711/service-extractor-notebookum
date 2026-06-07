@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,6 +15,8 @@ from uuid import uuid4
 
 from app.services.audit_service import emit_audit_event
 from app.services.pdf_service import PDFExtractionService
+
+logger = logging.getLogger(__name__)
 
 
 class BulkheadCapacityError(RuntimeError):
@@ -75,7 +80,17 @@ class ExtractionJob:
     def to_result_response(self) -> Optional[dict]:
         if self.result is None:
             return None
-        return dict(self.result)
+        return {
+            "job_id": self.job_id,
+            "document_id": self.document_id,
+            "filename": self.filename,
+            "status": self.status,
+            "text": self.result.get("text", ""),
+            "text_length": self.result.get("metrics", {}).get("text_length", 0),
+            "strategy": self.result.get("metadata", {}).get("extraction_strategy", ""),
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+        }
 
     def audit_metadata(self) -> dict:
         return {
@@ -247,6 +262,7 @@ class ExtractionJobStore:
                 degraded=extraction.degraded,
                 circuit_breaker_state=extraction.circuit_state,
             )
+            self._save_to_redis(job.document_id, job, extraction.text)
         except ValueError as exc:
             self._update_job(
                 job_id,
@@ -309,6 +325,28 @@ class ExtractionJobStore:
 
             active_jobs = self._active_jobs.get(job.bulkhead, 0)
             self._active_jobs[job.bulkhead] = max(0, active_jobs - 1)
+
+    def _save_to_redis(self, document_id: str, job: "ExtractionJob", text: str) -> None:
+        try:
+            import redis as redis_lib
+            r = redis_lib.Redis(
+                host=os.environ.get("REDIS_HOST", "redis"),
+                port=int(os.environ.get("REDIS_PORT", 6379)),
+                password=os.environ.get("REDIS_PASSWORD") or None,
+                decode_responses=True,
+            )
+            ttl = int(os.environ.get("EXTRACTION_TTL", 3600))
+            payload = json.dumps({
+                "document_id": document_id,
+                "text": text,
+                "filename": job.filename,
+                "content_type": job.content_type,
+                "job_id": job.job_id,
+            })
+            r.setex(f"extraction:{document_id}", ttl, payload)
+            logger.info("Extraction saved to Redis: extraction:%s", document_id)
+        except Exception as exc:
+            logger.warning("Failed to save extraction to Redis: %s", exc)
 
     def _now(self) -> str:
         return datetime.now(timezone.utc).isoformat()

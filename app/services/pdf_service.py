@@ -34,6 +34,14 @@ class PDFExtractionService:
         if not pdf_bytes.startswith(b"%PDF"):
             raise ValueError("Invalid PDF file: corrupted or unsupported content.")
 
+        pdfplumber_text = self._extract_with_pdfplumber(pdf_bytes)
+        if pdfplumber_text:
+            return ExtractionResult(
+                text=pdfplumber_text,
+                strategy="pdfplumber",
+                circuit_state=docling_circuit_breaker.state,
+            )
+
         self._configure_docling_circuit()
         docling_text = self._extract_with_docling(pdf_bytes)
         if docling_text:
@@ -53,6 +61,21 @@ class PDFExtractionService:
             )
 
         raise ValueError("PDF contains no extractable text.")
+
+    def _extract_with_pdfplumber(self, pdf_bytes: bytes) -> Optional[str]:
+        try:
+            import io
+            import pdfplumber
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                pages_text = []
+                for page in pdf.pages:
+                    text = page.extract_text()
+                    if text:
+                        pages_text.append(text.strip())
+            result = "\n\n".join(pages_text).strip()
+            return result or None
+        except Exception:
+            return None
 
     def _extract_with_docling(self, pdf_bytes: bytes) -> Optional[str]:
         if not docling_circuit_breaker.allow_request():
