@@ -46,6 +46,7 @@ class ExtractionJob:
     bulkhead: str
     created_at: str
     updated_at: str
+    user_id: str = ""
     idempotency_key: Optional[str] = None
     event_type: str = "extraction.accepted"
     result: Optional[dict] = None
@@ -148,6 +149,7 @@ class ExtractionJobStore:
         filename: str,
         content_type: str,
         bulkhead_config: BulkheadConfig,
+        user_id: str = "",
         idempotency_key: Optional[str] = None,
     ) -> ExtractionJob:
         now = self._now()
@@ -178,6 +180,7 @@ class ExtractionJobStore:
                 bulkhead=bulkhead_config.name,
                 created_at=now,
                 updated_at=now,
+                user_id=user_id,
                 idempotency_key=idempotency_key,
             )
             self._jobs[job.job_id] = job
@@ -342,6 +345,7 @@ class ExtractionJobStore:
                 "filename": job.filename,
                 "content_type": job.content_type,
                 "job_id": job.job_id,
+                "user_id": job.user_id,
             })
             r.setex(f"extraction:{document_id}", ttl, payload)
             logger.info("Extraction saved to Redis: extraction:%s", document_id)

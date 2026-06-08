@@ -1,0 +1,80 @@
+# Git files
+.git
+.gitignore
+.gitattributes
+
+# Python cache and dependencies
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.Python
+.pytest_cache
+.mypy_cache
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+.venv
+env/
+ENV/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing and coverage
+htmlcov/
+.coverage
+.coverage.*
+pytest.ini
+tox.ini
+
+# Environment files (don't include secrets)
+.env
+.env.local
+.env.*.local
+
+# Docker files (no need in image)
+Dockerfile
+docker-compose.yml
+.dockerignore
+/docker
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.circleci/
+
+# Documentation
+README.md
+docs/
+*.md
+
+# Temporary files
+*.tmp
+*.temp
+.tmp/
+
+# Development directories
+node_modules/
+.node_modules/
+npm-debug.log
+
+# Migrations backup (keep only active migrations)
+migrations/versions/*.py.bak
+
+# Database files (SQLite, if used)
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs
+logs/
+*.log

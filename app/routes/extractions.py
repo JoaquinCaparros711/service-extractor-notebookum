@@ -64,6 +64,7 @@ def extract_pdf():
         or request.form.get("correlation_id")
         or str(uuid4())
     )
+    user_id = request.form.get("user_id") or request.headers.get("X-User-ID") or ""
 
     bulkhead_config = _select_bulkhead(len(pdf_bytes))
     try:
@@ -74,6 +75,7 @@ def extract_pdf():
             filename=uploaded_file.filename or "",
             content_type=uploaded_file.content_type,
             bulkhead_config=bulkhead_config,
+            user_id=user_id,
             idempotency_key=(
                 request.headers.get("Idempotency-Key")
                 or request.form.get("idempotency_key")

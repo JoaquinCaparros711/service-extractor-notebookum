@@ -1,11 +1,8 @@
 services:
     extractor:
-        build:
-            context: .
-            dockerfile: Dockerfile
         image: notebookum-extractor:v1.0.0
         restart: unless-stopped
-        # LOAD BALANCER PATTERN - 1 replica: job store is in-memory, multi-replica breaks GET by ID
+        # 1 replica: job store is in-memory, multi-replica breaks GET by ID
         deploy:
             replicas: 1
         networks:
@@ -17,16 +14,14 @@ services:
             - "traefik.http.routers.extractor.rule=Host(`extractor.universidad.localhost`)"
             - "traefik.http.routers.extractor.entryPoints=https"
             - "traefik.http.routers.extractor.tls=true"
-            - "traefik.http.routers.extractor.middlewares=cb-extractor,bulkhead-extractor,cors-extractor"
+            - "traefik.http.routers.extractor.middlewares=extractor,bulkhead-extractor,cors-extractor"
             # CORS via Traefik (para dashboard desde file://)
             - "traefik.http.middlewares.cors-extractor.headers.accesscontrolalloworiginlist=*"
             - "traefik.http.middlewares.cors-extractor.headers.accesscontrolallowmethods=GET,POST,OPTIONS"
             - "traefik.http.middlewares.cors-extractor.headers.accesscontrolallowheaders=Content-Type,Authorization"
             - "traefik.http.middlewares.cors-extractor.headers.addvaryheader=true"
             - "traefik.http.services.extractor.loadbalancer.server.port=5000"
-            # CIRCUIT BREAKER PATTERN: Open circuit if error rate > 50%
-            - "traefik.http.middlewares.cb-extractor.circuitbreaker.expression=NetworkErrorRatio() > 0.5"
-            # BULKHEAD PATTERN: Limit concurrent connections to 20
+            - "traefik.http.middlewares.extractor.circuitbreaker.expression=NetworkErrorRatio() > 0.5"
             - "traefik.http.middlewares.bulkhead-extractor.inflightreq.amount=20"
         # volumes:
         #     - ./app:/app/app:ro
