@@ -1,6 +1,6 @@
 services:
     extractor:
-        image: notebookum-extractor:v1.0.0
+        image: notebookum-extractor:v1.1.0
         restart: unless-stopped
         # 1 replica: job store is in-memory, multi-replica breaks GET by ID
         deploy:
@@ -33,6 +33,7 @@ services:
             - REDIS_PORT=6379
             - REDIS_PASSWORD=${REDIS_PASSWORD:-Rediscontra123!}
             - EXTRACTION_TTL=3600
+            - CONSUL_URL=http://consul:8500
 
 networks:
     notebookum-network:

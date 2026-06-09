@@ -25,4 +25,7 @@ def create_app(config_class=Config):
     def health_check():
         return {"status": "ok", "service": "extractor"}, 200
 
+    from .utils.consul import register_extractor
+    register_extractor()
+
     return app
